@@ -160,13 +160,13 @@ impl Dataset {
         let params = params.unwrap_or_default();
 
         let latest_manifest_path = latest_manifest_path(object_store.base_path());
-        let latest_manifest = if matches!(params.mode, WriteMode::Create) {
+        let dataset = if matches!(params.mode, WriteMode::Create) {
             if object_store.exists(&latest_manifest_path).await? {
                 return Err(Error::IO(format!("Dataset already exists: {uri}")));
             }
             None
         } else {
-            Some(read_manifest(&object_store, &latest_manifest_path).await?)
+            Some(Dataset::open(uri).await?)
         };
 
         let mut peekable = batches.peekable();
@@ -185,7 +185,8 @@ impl Dataset {
         }
 
         if matches!(params.mode, WriteMode::Append) {
-            if let Some(m) = latest_manifest.as_ref() {
+            if let Some(d) = dataset.as_ref() {
+                let m = d.manifest.as_ref();
                 if schema != m.schema {
                     return Err(Error::IO(format!(
                         "Append with different schema: original={} new={}",
@@ -196,8 +197,8 @@ impl Dataset {
         }
 
         let mut fragment_id = if matches!(params.mode, WriteMode::Append) {
-            latest_manifest.as_ref().map_or(0, |m| {
-                m.fragments
+            dataset.as_ref().map_or(0, |d| {
+                d.manifest.fragments
                     .iter()
                     .map(|f| f.id)
                     .max()
@@ -211,23 +212,11 @@ impl Dataset {
         };
 
         let mut fragments: Vec<Fragment> = if matches!(params.mode, WriteMode::Append) {
-            latest_manifest
-                .as_ref()
-                .map_or(vec![], |m| m.fragments.as_ref().clone())
+            dataset.as_ref().map_or(vec![], |d| d.manifest.fragments.as_ref().clone())
         } else {
             // Create or Overwrite create new fragments.
             vec![]
         };
-
-        macro_rules! new_writer {
-            () => {{
-                let file_path = format!("{}.lance", Uuid::new_v4());
-                let fragment = Fragment::with_file(fragment_id, &file_path, &schema);
-                fragments.push(fragment);
-                fragment_id += 1;
-                Some(new_file_writer(&object_store, &file_path, &schema).await?)
-            }};
-        }
 
         let mut writer = None;
         let mut buffer = RecordBatchBuffer::empty();
@@ -237,7 +226,13 @@ impl Dataset {
             if buffer.num_rows() >= params.max_rows_per_group {
                 // TODO: the max rows per group boundary is not accurately calculated yet.
                 if writer.is_none() {
-                    writer = new_writer!();
+                    writer = {
+                        let file_path = format!("{}.lance", Uuid::new_v4());
+                        let fragment = Fragment::with_file(fragment_id, &file_path, &schema);
+                        fragments.push(fragment);
+                        fragment_id += 1;
+                        Some(new_file_writer(&object_store, &file_path, &schema).await?)
+                    }
                 };
                 writer.as_mut().unwrap().write(&buffer.finish()?).await?;
                 buffer = RecordBatchBuffer::empty();
@@ -251,7 +246,12 @@ impl Dataset {
         }
         if buffer.num_rows() > 0 {
             if writer.is_none() {
-                writer = new_writer!();
+                writer = {
+                    let file_path = format!("{}.lance", Uuid::new_v4());
+                    let fragment = Fragment::with_file(fragment_id, &file_path, &schema);
+                    fragments.push(fragment);
+                    Some(new_file_writer(&object_store, &file_path, &schema).await?)
+                }
             };
             writer.as_mut().unwrap().write(&buffer.finish()?).await?;
         }
@@ -262,17 +262,22 @@ impl Dataset {
         };
 
         let mut manifest = Manifest::new(&schema, Arc::new(fragments));
-        manifest.version = latest_manifest.map_or(1, |m| m.version + 1);
-        if matches!(params.mode, WriteMode::Overwrite) {
-            // If overwrite, invalidate index
-            manifest.index_section = None;
-        }
+        manifest.version = dataset.as_ref().map_or(1, |d| d.manifest.version + 1);
+        let indices = if matches!(params.mode, WriteMode::Append) {
+            if let Some(d) = dataset.as_ref() {
+                Some(d.load_indices().await?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         let duration_since_epoch = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap();
         let timestamp_nanos = duration_since_epoch.as_nanos(); // u128
         manifest.timestamp_nanos = timestamp_nanos;
-        write_manifest_file(&object_store, &mut manifest, None).await?;
+        write_manifest_file(&object_store, &mut manifest, indices).await?;
 
         let base = object_store.base_path().clone();
         Ok(Self {
@@ -393,13 +398,14 @@ impl Dataset {
             }
         }
 
-        // Write index metadata down
-        let new_idx = Index::new(index_id, &index_name, &[field.id]);
-        indices.push(new_idx);
-
         let latest_manifest = self.latest_manifest().await?;
         let mut new_manifest = self.manifest.as_ref().clone();
         new_manifest.version = latest_manifest.version + 1;
+
+        // Write index metadata down
+        let frag_ids = latest_manifest.fragments.last().map(|f| f.id).unwrap_or(0);
+        let new_idx = Index::new(index_id, &index_name, &[field.id], frag_ids);
+        indices.push(new_idx);
 
         write_manifest_file(&self.object_store, &mut new_manifest, Some(indices)).await?;
 
@@ -1051,10 +1057,15 @@ mod tests {
         let mut params = VectorIndexParams::default();
         params.num_partitions = 10;
         params.num_sub_vectors = 2;
-        dataset
+        let dataset = dataset
             .create_index(&["embeddings"], IndexType::Vector, None, &params, false)
             .await
             .unwrap();
+
+        let indices = dataset.load_indices().await.unwrap();
+        let actual_frag_id = indices.first().unwrap().max_fragment_id;
+        let expected_frag_id = dataset.manifest.fragments.last().unwrap().id;
+        assert_eq!(actual_frag_id, expected_frag_id);
 
         if simd_alignment() > 1 {
             params.num_sub_vectors = 10;
@@ -1063,6 +1074,23 @@ mod tests {
                 .await;
             assert!(err.is_err())
         }
+
+
+        let mut write_params = WriteParams::default();
+        write_params.mode = WriteMode::Append;
+        let batches =
+            RecordBatchBuffer::new(vec![
+                RecordBatch::try_new(schema.clone(), vec![vectors.clone()]).unwrap()
+            ]);
+        let mut reader: Box<dyn RecordBatchReader> = Box::new(batches);
+        let dataset = Dataset::write(&mut reader, test_uri, Some(write_params))
+            .await
+            .unwrap();
+        let indices = dataset.load_indices().await.unwrap();
+        println!("Indices loaded: {:?}", indices);
+        let actual_frag_id = indices.first().unwrap().max_fragment_id;
+        let expected_frag_id = dataset.manifest.fragments.last().unwrap().id - 1;
+        assert_eq!(actual_frag_id, expected_frag_id);
 
         let mut write_params = WriteParams::default();
         write_params.mode = Overwrite;
@@ -1075,5 +1103,6 @@ mod tests {
             .await
             .unwrap();
         assert!(dataset.manifest.index_section.is_none());
+        assert!(dataset.load_indices().await.unwrap().is_empty());
     }
 }
