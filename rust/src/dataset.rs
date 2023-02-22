@@ -16,15 +16,17 @@
 //!
 
 use std::collections::BTreeMap;
+use std::ops::Deref;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use arrow_array::{
-    cast::as_struct_array, RecordBatch, RecordBatchReader, StructArray, UInt64Array,
-};
+use arrow::ffi_stream::ArrowArrayStreamReader;
+use arrow_array::{Array, ArrayRef, cast::as_struct_array, Int32Array, PrimitiveArray, RecordBatch, RecordBatchReader, StructArray, UInt64Array};
+use arrow_array::types::Float32Type;
 use arrow_schema::{DataType, Schema as ArrowSchema};
 use arrow_select::{concat::concat_batches, take::take};
 use chrono::prelude::*;
+use datafusion::parquet::column;
 use futures::stream::{self, StreamExt, TryStreamExt};
 use object_store::path::Path;
 use uuid::Uuid;
@@ -308,6 +310,43 @@ impl Dataset {
             .try_collect::<Vec<_>>()
             .await?;
         Ok(counts.iter().sum())
+    }
+
+
+    pub async fn merge(&self,
+                 right: &mut ArrowArrayStreamReader,
+                 left_on: String,
+                 right_on: String
+                 // metadata: Optional[Dict[str, str]] = None,
+    ) -> Result<RecordBatch> {
+        println!("Inside Lance: right '{}' left '{}'", right_on, left_on);
+        println!("Inside Lance: my schema: {}", self.schema());
+        println!("Inside Lance: schema to be joined: {}", right.schema());
+
+        // Merge the schemas - could potentially be a method in lance::datatypes::Schema?
+        // validate if left_on / right_on exist
+        let merged_schema = Arc::new(arrow_schema::Schema::try_merge(vec![
+            arrow_schema::Schema::from(self.schema()),
+            right.schema().to_owned().deref().clone()])?);
+        println!("Inside Lance: merged schema: {}", merged_schema);
+
+        let mut buffer = RecordBatchBuffer::empty();
+
+        // Should we error out if a single record has a problem / return Err?
+        while let Some(Ok(record_batch)) = right.next() {
+            let mut merged_columns: Vec<ArrayRef> = Vec::new();
+
+            for column in record_batch.columns() {
+                merged_columns.push(column.clone());
+            }
+
+            // TODO figure out how to pull the fields into something like an ArrayRef, for testing just double input
+            merged_columns.push(record_batch.column(0).clone());
+            merged_columns.push(record_batch.column(1).clone());
+
+            buffer.batches.push(RecordBatch::try_new(merged_schema.clone(), merged_columns)?);
+        }
+        buffer.finish()
     }
 
     /// Create indices on columns.

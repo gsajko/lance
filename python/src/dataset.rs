@@ -15,12 +15,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use std::ops::Deref;
 use std::sync::Arc;
 
 use arrow::ffi_stream::ArrowArrayStreamReader;
 use arrow::pyarrow::*;
 use arrow_array::{Float32Array, RecordBatchReader};
 use arrow_data::ArrayData;
+use arrow_array::make_array;
 use arrow_schema::Schema as ArrowSchema;
 use lance::index::vector::VectorIndexParams;
 use lance::index::IndexType;
@@ -33,6 +35,7 @@ use tokio::runtime::Runtime;
 use crate::Scanner;
 use ::lance::dataset::scanner::Scanner as LanceScanner;
 use ::lance::dataset::Dataset as LanceDataset;
+use arrow::ipc::RecordBatch;
 use lance::dataset::{Version, WriteMode, WriteParams};
 
 const DEFAULT_NPROBS: usize = 1;
@@ -161,6 +164,50 @@ impl Dataset {
                 .map_err(|err| PyIOError::new_err(err.to_string()))?)
         })
     }
+
+    /**
+
+    error[E0507]: cannot move out of an `Arc`373/374: pylance
+   --> src/dataset.rs:189:16
+    |
+189 |               Ok(ds
+    |  ________________^
+190 | |                 .merge(reader.as_ref(), left_on, right_on)
+    | |__________________________________________________________^ move occurs because value has type
+    `lance::dataset::Dataset`, which does not implement the `Copy` trait
+    **/
+
+    fn merge(
+             self_: PyRef<'_, Self>,
+             right: &PyAny,
+             left_on: String,
+             right_on: String
+             // metadata: Optional[Dict[str, str]] = None,
+    ) -> PyResult<PyObject> {
+       let ds = self_.ds.clone();
+
+       let batch = self_.rt.block_on(async move {
+            let mut reader = Box::new(ArrowArrayStreamReader::from_pyarrow(right)?);
+            ds
+                .merge(reader.as_mut(), left_on, right_on)
+                .await
+                .map_err(|err| PyIOError::new_err(err.to_string()))
+       });
+       batch?.to_pyarrow(self_.py())
+    }
+
+    /**
+        pub async fn merge(self,
+                 // right: ArrayRef,
+                 right: &ArrowArrayStreamReader,
+                 left_on: String,
+                 right_on: String
+                 // metadata: Optional[Dict[str, str]] = None,
+    ) -> Result<()> {
+        // let array = make_array(ArrayData::from_pyarrow(right)?);
+        Ok(())
+    }
+    **/
 
     fn take(self_: PyRef<'_, Self>, row_indices: Vec<usize>) -> PyResult<PyObject> {
         let projection = self_.ds.schema();

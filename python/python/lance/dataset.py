@@ -329,6 +329,28 @@ class LanceDataset(pa.dataset.Dataset):
 
         self._ds.create_index(column, index_type, name, kwargs)
 
+    def merge(self,
+              right: pyarrow.Table,
+              left_on: str,
+              right_on: str,
+              metadata: Optional[Dict[str, str]] = None,
+              ) -> str:
+              # ) -> FileSystemDataset:
+        """Merge another table using Left-join
+
+        Parameters:
+        right : pyarrow.Table
+            The table to merge into this dataset.
+        left_on : str
+            The name of the column in this dataset to be compared during merge.
+        right_on : str
+            The name of the column in the right table to be compared during merge.
+        metadata : Dict[str, str], optional
+            Optional key-value metadata
+        """
+      # elif isinstance(data_obj, pa.Table):
+        return self._ds.merge(right.to_reader(), left_on, right_on)
+
 
 class ScannerBuilder:
     def __init__(self, ds: LanceDataset):
