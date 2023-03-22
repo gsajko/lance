@@ -179,6 +179,7 @@ impl ObjectStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
 
     #[tokio::test]
     async fn test_uri_expansion() {
@@ -191,9 +192,16 @@ mod tests {
         }
 
         // absolute file system uri doesn't need expansion
-        let uri = "/bar/foo.lance";
-        let store = ObjectStore::new(uri).await.unwrap();
-        // +1 for the leading slash Path.as_ref() doesn't read back
-        assert!(store.base_path().as_ref().len() + 1 == uri.len());
+        if env::consts::OS == "windows" {
+            let uri = r"file:c:\bar\foo.lance";
+            let store = ObjectStore::new(uri).await.unwrap();
+            // +5 for the leading for the scheme (file:)
+            assert!(store.base_path().as_ref().len() + 5 == uri.len());
+        } else {
+            let uri = "/bar/foo.lance";
+            let store = ObjectStore::new(uri).await.unwrap();
+            // +1 for the leading slash Path.as_ref() doesn't read back
+            assert!(store.base_path().as_ref().len() + 1 == uri.len());
+        }
     }
 }

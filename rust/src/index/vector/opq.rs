@@ -311,6 +311,7 @@ mod tests {
     };
 
     #[tokio::test]
+    #[cfg(target_family = "unix")]
     async fn test_train_opq() {
         const DIM: usize = 32;
         let data = Arc::new(Float32Array::from_iter((0..12800).map(|v| v as f32)));

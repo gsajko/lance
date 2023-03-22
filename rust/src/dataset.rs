@@ -684,6 +684,7 @@ mod tests {
     use arrow_select::take::take;
     use futures::stream::TryStreamExt;
     use tempfile::tempdir;
+    use url::Url;
 
     #[tokio::test]
     async fn create_dataset() {
@@ -720,17 +721,18 @@ mod tests {
         );
         let expected_batches = batches.batches.clone();
 
-        let test_uri = test_dir.path().to_str().unwrap();
+        let url = Url::from_file_path(test_dir.path()).unwrap();
+        let url_ref = url.as_str();
 
         let mut write_params = WriteParams::default();
         write_params.max_rows_per_file = 40;
         write_params.max_rows_per_group = 10;
         let mut reader: Box<dyn RecordBatchReader> = Box::new(batches);
-        Dataset::write(&mut reader, test_uri, Some(write_params))
+        Dataset::write(&mut reader, url_ref, Some(write_params))
             .await
             .unwrap();
 
-        let actual_ds = Dataset::open(test_uri).await.unwrap();
+        let actual_ds = Dataset::open(url_ref).await.unwrap();
         assert_eq!(actual_ds.version().version, 1);
         let actual_schema = ArrowSchema::from(actual_ds.schema());
         assert_eq!(&actual_schema, schema.as_ref());
@@ -780,12 +782,13 @@ mod tests {
         )
         .unwrap()]);
 
-        let test_uri = test_dir.path().to_str().unwrap();
+        let url = Url::from_file_path(test_dir.path()).unwrap();
+        let url_ref = url.as_str();
         let mut write_params = WriteParams::default();
         write_params.max_rows_per_file = 40;
         write_params.max_rows_per_group = 10;
         let mut batches: Box<dyn RecordBatchReader> = Box::new(batches);
-        Dataset::write(&mut batches, test_uri, Some(write_params))
+        Dataset::write(&mut batches, url_ref, Some(write_params))
             .await
             .unwrap();
 
@@ -796,7 +799,7 @@ mod tests {
         .unwrap()]);
         write_params.mode = WriteMode::Append;
         let mut batches: Box<dyn RecordBatchReader> = Box::new(batches);
-        Dataset::write(&mut batches, test_uri, Some(write_params))
+        Dataset::write(&mut batches, url_ref, Some(write_params))
             .await
             .unwrap();
 
@@ -806,7 +809,7 @@ mod tests {
         )
         .unwrap();
 
-        let actual_ds = Dataset::open(test_uri).await.unwrap();
+        let actual_ds = Dataset::open(url_ref).await.unwrap();
         assert_eq!(actual_ds.version().version, 2);
         let actual_schema = ArrowSchema::from(actual_ds.schema());
         assert_eq!(&actual_schema, schema.as_ref());
@@ -855,12 +858,13 @@ mod tests {
         )
         .unwrap()]);
 
-        let test_uri = test_dir.path().to_str().unwrap();
+        let url = Url::from_file_path(test_dir.path()).unwrap();
+        let url_ref = url.as_str();
         let mut write_params = WriteParams::default();
         write_params.max_rows_per_file = 40;
         write_params.max_rows_per_group = 10;
         let mut batches: Box<dyn RecordBatchReader> = Box::new(batches);
-        Dataset::write(&mut batches, test_uri, Some(write_params))
+        Dataset::write(&mut batches, url_ref, Some(write_params))
             .await
             .unwrap();
 
@@ -878,11 +882,11 @@ mod tests {
         .unwrap()]);
         write_params.mode = WriteMode::Overwrite;
         let mut new_batch_reader: Box<dyn RecordBatchReader> = Box::new(new_batches);
-        Dataset::write(&mut new_batch_reader, test_uri, Some(write_params))
+        Dataset::write(&mut new_batch_reader, url_ref, Some(write_params))
             .await
             .unwrap();
 
-        let actual_ds = Dataset::open(test_uri).await.unwrap();
+        let actual_ds = Dataset::open(url_ref).await.unwrap();
         assert_eq!(actual_ds.version().version, 2);
         let actual_schema = ArrowSchema::from(actual_ds.schema());
         assert_eq!(&actual_schema, new_schema.as_ref());
@@ -906,7 +910,7 @@ mod tests {
         assert_eq!(actual_ds.version().version, 2);
 
         // But we can still check out the first version
-        let first_ver = Dataset::checkout(test_uri, 1).await.unwrap();
+        let first_ver = Dataset::checkout(url_ref, 1).await.unwrap();
         assert_eq!(first_ver.version().version, 1);
         assert_eq!(&ArrowSchema::from(first_ver.schema()), schema.as_ref());
     }
@@ -935,16 +939,17 @@ mod tests {
                 })
                 .collect(),
         );
-        let test_uri = test_dir.path().to_str().unwrap();
+        let url = Url::from_file_path(test_dir.path()).unwrap();
+        let url_ref = url.as_str();
         let mut write_params = WriteParams::default();
         write_params.max_rows_per_file = 40;
         write_params.max_rows_per_group = 10;
         let mut batches: Box<dyn RecordBatchReader> = Box::new(batches);
-        Dataset::write(&mut batches, test_uri, Some(write_params))
+        Dataset::write(&mut batches, url_ref, Some(write_params))
             .await
             .unwrap();
 
-        let dataset = Dataset::open(test_uri).await.unwrap();
+        let dataset = Dataset::open(url_ref).await.unwrap();
         assert_eq!(dataset.count_rows().await.unwrap(), 400);
         let projection = Schema::try_from(schema.as_ref()).unwrap();
         let values = dataset
@@ -999,16 +1004,17 @@ mod tests {
                 })
                 .collect(),
         );
-        let test_uri = test_dir.path().to_str().unwrap();
+        let url = Url::from_file_path(test_dir.path()).unwrap();
+        let url_ref = url.as_str();
         let mut write_params = WriteParams::default();
         write_params.max_rows_per_file = 40;
         write_params.max_rows_per_group = 10;
         let mut batches: Box<dyn RecordBatchReader> = Box::new(batches);
-        Dataset::write(&mut batches, test_uri, Some(write_params))
+        Dataset::write(&mut batches, url_ref, Some(write_params))
             .await
             .unwrap();
 
-        let dataset = Dataset::open(test_uri).await.unwrap();
+        let dataset = Dataset::open(url_ref).await.unwrap();
         assert_eq!(dataset.count_rows().await.unwrap(), 400);
         let projection = Schema::try_from(schema.as_ref()).unwrap();
         let values = dataset
@@ -1061,16 +1067,17 @@ mod tests {
                 .collect(),
         );
 
-        let test_uri = test_dir.path().to_str().unwrap();
+        let url = Url::from_file_path(test_dir.path()).unwrap();
+        let url_ref = url.as_str();
         let mut write_params = WriteParams::default();
         write_params.max_rows_per_file = 40;
         write_params.max_rows_per_group = 10;
         let mut batches: Box<dyn RecordBatchReader> = Box::new(batches);
-        Dataset::write(&mut batches, test_uri, Some(write_params))
+        Dataset::write(&mut batches, url_ref, Some(write_params))
             .await
             .unwrap();
 
-        let dataset = Dataset::open(test_uri).await.unwrap();
+        let dataset = Dataset::open(url_ref).await.unwrap();
         assert_eq!(10, dataset.fragments().len());
         assert_eq!(400, dataset.count_rows().await.unwrap());
     }
@@ -1097,10 +1104,10 @@ mod tests {
         )
         .unwrap()]);
 
-        let test_uri = test_dir.path().to_str().unwrap();
-
+        let url = Url::from_file_path(test_dir.path()).unwrap();
+        let url_ref = url.as_str();
         let mut reader: Box<dyn RecordBatchReader> = Box::new(batches);
-        let dataset = Dataset::write(&mut reader, test_uri, None).await.unwrap();
+        let dataset = Dataset::write(&mut reader, url_ref, None).await.unwrap();
 
         let mut params = VectorIndexParams::default();
         params.num_partitions = 10;
@@ -1125,7 +1132,7 @@ mod tests {
                 RecordBatch::try_new(schema.clone(), vec![vectors]).unwrap()
             ]);
         let mut reader: Box<dyn RecordBatchReader> = Box::new(batches);
-        let dataset = Dataset::write(&mut reader, test_uri, Some(write_params))
+        let dataset = Dataset::write(&mut reader, url_ref, Some(write_params))
             .await
             .unwrap();
         assert!(dataset.manifest.index_section.is_none());

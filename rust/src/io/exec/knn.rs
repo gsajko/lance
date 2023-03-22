@@ -312,6 +312,7 @@ mod tests {
     use arrow_schema::{DataType, Field as ArrowField, Schema as ArrowSchema};
     use futures::TryStreamExt;
     use tempfile::tempdir;
+    use url::Url;
 
     use crate::arrow::*;
     use crate::dataset::{Dataset, WriteParams};
@@ -354,8 +355,8 @@ mod tests {
                 .collect(),
         );
 
-        let test_dir = tempdir().unwrap();
-        let test_uri = test_dir.path().to_str().unwrap();
+        let url = Url::from_file_path(tempdir().unwrap()).unwrap();
+        let url_ref = url.as_str();
 
         let mut write_params = WriteParams::default();
         write_params.max_rows_per_file = 40;
@@ -364,11 +365,11 @@ mod tests {
         let q = as_fixed_size_list_array(&vector_arr).value(5);
 
         let mut reader: Box<dyn RecordBatchReader> = Box::new(batches);
-        Dataset::write(&mut reader, test_uri, Some(write_params))
+        Dataset::write(&mut reader, url_ref, Some(write_params))
             .await
             .unwrap();
 
-        let dataset = Dataset::open(test_uri).await.unwrap();
+        let dataset = Dataset::open(url_ref).await.unwrap();
         let stream = dataset
             .scan()
             .nearest("vector", as_primitive_array(&q), 10)

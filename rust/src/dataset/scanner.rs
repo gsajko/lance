@@ -449,6 +449,7 @@ mod test {
     use arrow_schema::DataType;
     use futures::TryStreamExt;
     use tempfile::tempdir;
+    use url::Url;
 
     use crate::{arrow::RecordBatchBuffer, dataset::WriteParams};
 
@@ -476,17 +477,17 @@ mod test {
                 .collect(),
         );
 
-        let test_dir = tempdir().unwrap();
-        let test_uri = test_dir.path().to_str().unwrap();
+        let test_url = Url::from_file_path(tempdir().unwrap()).unwrap();
+        let test_url_ref = test_url.as_str();
         let mut write_params = WriteParams::default();
         write_params.max_rows_per_file = 40;
         write_params.max_rows_per_group = 10;
         let mut batches: Box<dyn RecordBatchReader> = Box::new(batches);
-        Dataset::write(&mut batches, test_uri, Some(write_params))
+        Dataset::write(&mut batches, test_url_ref, Some(write_params))
             .await
             .unwrap();
 
-        let dataset = Dataset::open(test_uri).await.unwrap();
+        let dataset = Dataset::open(test_url_ref).await.unwrap();
         let mut stream = dataset
             .scan()
             .batch_size(8)
@@ -520,11 +521,13 @@ mod test {
         .unwrap()]);
 
         let mut batches: Box<dyn RecordBatchReader> = Box::new(batches);
-        let test_dir = tempdir().unwrap();
-        let test_uri = test_dir.path().to_str().unwrap();
-        Dataset::write(&mut batches, test_uri, None).await.unwrap();
+        let test_url = Url::from_file_path(tempdir().unwrap()).unwrap();
+        let test_url_ref = test_url.as_str();
+        Dataset::write(&mut batches, test_url_ref, None)
+            .await
+            .unwrap();
 
-        let dataset = Dataset::open(test_uri).await.unwrap();
+        let dataset = Dataset::open(test_url_ref).await.unwrap();
         let mut scan = dataset.scan();
         assert!(scan.filter.is_none());
 
@@ -561,12 +564,13 @@ mod test {
         let temp = tempdir().unwrap();
         let mut file_path = PathBuf::from(temp.as_ref());
         file_path.push("limit_test.lance");
-        let path = file_path.to_str().unwrap();
-        let expected_batches = write_data(path).await;
+        let url = Url::from_file_path(file_path).unwrap();
+        let url_ref = url.as_str();
+        let expected_batches = write_data(url_ref).await;
         let expected_combined =
             concat_batches(&expected_batches[0].schema(), &expected_batches).unwrap();
 
-        let dataset = Dataset::open(path).await.unwrap();
+        let dataset = Dataset::open(url_ref).await.unwrap();
         let mut scanner = dataset.scan();
         scanner.limit(2, Some(19)).unwrap();
         let actual_batches: Vec<RecordBatch> = scanner

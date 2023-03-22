@@ -583,6 +583,7 @@ mod tests {
     use arrow_schema::{Field as ArrowField, Schema as ArrowSchema};
     use futures::StreamExt;
     use tempfile::tempdir;
+    use url::Url;
 
     use crate::io::FileWriter;
 
@@ -962,15 +963,16 @@ mod tests {
             batches.push(batch);
         }
 
-        let test_uri = test_dir.path().to_str().unwrap();
+        let url = Url::from_file_path(test_dir.path()).unwrap();
+        let url_ref = url.as_str();
 
         let batch_buffer = crate::arrow::RecordBatchBuffer::new(batches.clone());
         let mut batch_reader: Box<dyn RecordBatchReader> = Box::new(batch_buffer);
-        Dataset::write(&mut batch_reader, test_uri, Some(WriteParams::default()))
+        Dataset::write(&mut batch_reader, url_ref, Some(WriteParams::default()))
             .await
             .unwrap();
 
-        let _result = scan_dataset(test_uri).await.unwrap();
+        let _result = scan_dataset(url_ref).await.unwrap();
 
         assert_eq!(batches, _result);
     }
